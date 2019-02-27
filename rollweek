@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""A script to roll weekly log files"""
+
+from datetime import date, timedelta
+from pathlib import Path
+import re
+import sys
+
+import quarg
+
+class easysearch:
+    "A wrapper class to avoid repetition without a controversial PEP"
+
+    def __init__(self, string):
+        self.string = string
+        self.match = None
+
+    def __call__(self, pattern, flags = 0):
+        self.match = re.search(pattern, self.string, flags)
+        return self.match
+
+    def __getattr__(self, name):
+        return getattr(self.match, name)
+
+    def __getitem__(self,key):
+        return self.match[key]
+
+def add_date(string, datestring):
+    if date and not re.search(r'_From \d{4}-\d{2}-\d{2}_', string):
+        return f'{string.rstrip()} _From {datestring}_\n'
+    else:
+        return string
+
+@quarg.command
+def roll(logfile = Path('thisweek.md')):
+    """Archive the current week's log, and create the next week's"""
+
+    with logfile.open() as f:
+        lines = f.readlines()
+
+    backup = logfile.with_suffix('.md.backup')
+    logfile.rename(backup)
+
+    carried_over = []
+    last_date = None
+    whitespace = False
+
+    top_date_string = re.search(r'\d{4}-\d{2}-\d{2}', lines[0]).group(0)
+    top_date = date.fromisoformat(top_date_string)
+
+    with (Path.cwd() / top_date_string).with_suffix('.md').open('w') as f:
+        for l in lines:
+            search = easysearch(l)
+            if search(r'^##.*(\d{4}-\d{2}-\d{2})'):
+                last_date = search.group(1)
+
+            if search("^#+\s+TODO", re.I):
+                pass
+            elif search("^-\s+\[\s+\]"):
+                carried_over.append( (l,last_date) )
+            elif search("^\s+$"):
+                if not whitespace:
+                    f.write(l)
+                    whitespace = True
+            else:
+                f.write(l)
+                whitespace = False
+
+        f.write("\n## Carried Over\n")
+        for c,d in carried_over:
+            f.write(add_date(c,d))
+
+    next_week = top_date + timedelta(days=7)
+
+    with logfile.open('w') as f:
+        f.write(f"# Week of {next_week.isoformat()}\n\n## TODO\n")
+        for c,d in carried_over:
+            f.write(add_date(c,d or top_date_string))
+
+        for d in range(0,5):
+            day = next_week + timedelta(days=d)
+            f.write(f'\n## {day:%A %Y-%m-%d}\n')
+
+
+quarg.main()
